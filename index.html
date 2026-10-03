@@ -320,6 +320,7 @@
     let audioContext = null;
     let musicTimer = null;
     let musicPlaying = false;
+    let musicWanted = true;
 
     const lullaby = [
       [60,.55],[64,.55],[67,.8],[69,.55],[67,.55],[64,.8],[62,.55],[64,.55],[60,1.1],
@@ -336,7 +337,7 @@
         oscillator.type = 'sine';
         oscillator.frequency.value = 440 * Math.pow(2, (note - 69) / 12);
         gain.gain.setValueAtTime(.0001, when);
-        gain.gain.exponentialRampToValueAtTime(.12, when + .035);
+        gain.gain.exponentialRampToValueAtTime(.3, when + .035);
         gain.gain.exponentialRampToValueAtTime(.0001, when + duration * .88);
         oscillator.connect(gain).connect(audioContext.destination);
         oscillator.start(when);
@@ -345,24 +346,47 @@
       });
     }
 
-    async function toggleMusic() {
-      if (!musicPlaying) {
-        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
-        await audioContext.resume();
+    function syncMusic() {
+      const shouldPlay = musicWanted && !document.hidden && audioContext?.state === 'running';
+      if (shouldPlay && !musicPlaying) {
         musicPlaying = true;
         playPhrase();
         musicTimer = setInterval(playPhrase, phraseLength * 1000);
         musicButton.setAttribute('aria-pressed', 'true');
         musicButton.setAttribute('aria-label', '暂停温柔小调');
         musicLabel.textContent = '音乐播放中';
-      } else {
+      } else if (!shouldPlay) {
         musicPlaying = false;
         clearInterval(musicTimer);
         musicTimer = null;
-        await audioContext.suspend();
         musicButton.setAttribute('aria-pressed', 'false');
         musicButton.setAttribute('aria-label', '播放温柔小调');
         musicLabel.textContent = '开启音乐';
+      }
+    }
+
+    function startMusic() {
+      if (!musicWanted || document.hidden) return;
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (!Audio) return;
+      try {
+        if (!audioContext) {
+          audioContext = new Audio();
+          audioContext.addEventListener('statechange', syncMusic);
+        }
+        audioContext.resume().then(syncMusic).catch(() => {});
+        syncMusic();
+      } catch (_) {}
+    }
+
+    function toggleMusic() {
+      if (musicPlaying) {
+        musicWanted = false;
+        syncMusic();
+        audioContext.suspend().catch(() => {});
+      } else {
+        musicWanted = true;
+        startMusic();
       }
     }
 
@@ -423,8 +447,19 @@
       openPhoto(Math.floor(Math.random() * activePhotos.length));
     });
     musicButton.addEventListener('click', toggleMusic);
+    const unlockMusic = event => {
+      if (!event.target.closest('.music-btn')) startMusic();
+    };
+    document.addEventListener('touchstart', unlockMusic, { passive: true });
+    document.addEventListener('pointerdown', unlockMusic, { passive: true });
+    document.addEventListener('keydown', unlockMusic);
+    document.addEventListener('WeixinJSBridgeReady', startMusic);
+    startMusic();
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && musicPlaying) toggleMusic();
+      if (document.hidden) {
+        syncMusic();
+        if (audioContext) audioContext.suspend().catch(() => {});
+      } else startMusic();
     });
     lightbox.querySelector('.lb-close').addEventListener('click', closePhoto);
     lightbox.querySelector('.lb-prev').addEventListener('click', () => step(-1));
